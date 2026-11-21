@@ -15,7 +15,7 @@ jobs:
         with: {python-version: '3.13'}
       - run: python build.py --test && python build.py
       - uses: actions/upload-artifact@v4
-        with: {name: site, path: site, include-hidden-files: true}
+        with: {name: site, path: site}
   publish:  # pushes the built files to the site branch as one commit
     needs: build
     runs-on: ubuntu-latest
@@ -23,10 +23,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: {name: site, path: site}
-      - working-directory: site
+      - env:  # git dir outside the artifact, no hooks, token via header not URL
+          GIT_DIR: ${{ runner.temp }}/git
+          GIT_WORK_TREE: site
+          AUTH: ${{ github.token }}
         run: |
           git init -q -b site
+          git config core.hooksPath /dev/null
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A && git commit -qm "Build $(date -u +%F)"
-          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" site
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$AUTH" | base64 -w0)"             push -qf "https://github.com/${{ github.repository }}" site

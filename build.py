@@ -247,7 +247,6 @@ def build(out=Path('site')):
         m3u += [f'#EXTINF:-1 tvg-chno="{m["channelNumber"]}" tvg-logo="{c["logo"] or ""}" '
                 f'group-title="{c["group"]}",{c["name"]}', c['sources'][0][4]]
     (out / 'playlist.m3u').write_text('\n'.join(m3u) + '\n', 'utf8')
-    (out / '.nojekyll').write_text('')
     stats = {g: sum(c['group'] == g for c in channels) for g in groups}
     (out / 'index.html').write_text(
         '<!doctype html><meta charset="utf-8"><title>Free TV</title><h1>Free TV</h1>'
