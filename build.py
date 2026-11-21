@@ -55,7 +55,7 @@ EPG_FEEDS = [('https://i.mjh.nz/PlutoTV/all.xml.gz', None), ('https://i.mjh.nz/S
     (f'https://epgshare01.online/epgshare01/epg_ripper_{c}.xml.gz', None)
     for c in ('SE1', 'TR1', 'TR3', 'UK1', 'US2', 'CA2', 'AU1', 'IE1', 'NZ1')]
 DAY = 86400
-GUIDE_DAYS = range(-1, 7)  # UTC days: yesterday through today+6
+GUIDE_DAYS = range(0, 7)  # UTC days: today through today+6 (no catch-up, so no yesterday)
 BLOCK = 3 * 3600  # placeholder programme length, aligned to UTC
 MIN_GAP = 300  # gaps shorter than this stretch the programme before them
 MAX_TITLE, MAX_DESC = 200, 500
@@ -90,7 +90,7 @@ def norm(name):
     name = re.sub(r'[Ⓐ-ⓩ]', '', name)  # Free-TV's circled markers
     name = re.sub(r'\((\d+p|[^)]*geo[^)]*)\)|\[[^\]]*\]', '', name, flags=re.I)
     name = re.sub(r'\b(hd|fhd|uhd|sd|4k)\b', '', name, flags=re.I)
-    return re.sub(r'[^0-9a-zà-ÿçğıöşü]+', '', name.lower())
+    return re.sub(r'[^0-9a-zà-ÿçğıöşü]+', '', name.lower().replace('+', 'plus'))  # AMC+ is not AMC
 
 
 def clean_name(name):
@@ -221,11 +221,11 @@ def xmltv_time(s):
 
 
 def channel_keys(c):
-    """What an XMLTV channel can match a channel by: its iptv-org id, Pluto/Roku-style ids in its
-    stream URLs, and its name within its country (an iptv-org id ends in the country). A Swedish or
+    """What an XMLTV channel can match a channel by: its iptv-org id, Pluto/Roku-style ids in the
+    URL it plays first (later sources can be other channels), and its name within its country (an iptv-org id ends in the country). A Swedish or
     Turkish channel only takes a Swedish or Turkish schedule."""
     keys = {('id', c['key'].lower())}
-    keys |= {('id', h) for s in c['sources']
+    keys |= {('id', h) for s in c['sources'][:1]
              for h in re.findall(r'(?<![0-9a-f])(?:[0-9a-f]{32}|[0-9a-f]{24})(?![0-9a-f])', s[4].lower())}
     country = None if c['key'].startswith('n:') else c['key'].rsplit('.', 1)[-1].lower()
     if local := {'Swedish': 'se', 'Turkish': 'tr'}.get(c['group']):
@@ -268,7 +268,8 @@ def epg_feeds():
 
 def read_guides(feeds, channels, lo, hi):
     """{channel key: (feed, [(start, end, title, desc, genres)])}: each channel's best XMLTV match
-    with programmes in [lo, hi). An id match beats a name match, then the one with most programmes."""
+    with programmes in [lo, hi). One with programmes beats one without, an id match beats a name
+    match, then the one with most programmes wins."""
     lookup = {}
     for c in channels:
         for k in channel_keys(c):
@@ -296,11 +297,11 @@ def read_guides(feeds, channels, lo, hi):
                         progs[src].append((s, e, title, clean(el.findtext('desc'), MAX_DESC),
                                            list(dict.fromkeys(g for g in genres if g))[:3]))
                 root.clear()
-        except (ET.ParseError, OSError, EOFError, ValueError) as e:
+        except Exception as e:  # a broken feed (bad gzip, bad XML, too large) only loses itself
             print(f'guide {feed}: {e} (keeping what was read)', flush=True)
     found = {}
     for key, srcs in links.items():
-        src = min(srcs, key=lambda s: (srcs[s], -len(progs[s])))
+        src = min(srcs, key=lambda s: (not progs[s], srcs[s], -len(progs[s])))
         if progs[src]:
             found[key] = (src[0], progs[src])
     return found
@@ -421,7 +422,9 @@ def build(out=Path('site')):
             write(guide_path(g, date), {'metasDetailed': [m for m in dated if m['genres'] == [g]]})
     m3u = ['#EXTM3U']
     for m, c in zip(metas, channels):
-        write(f'meta/tv/{c["id"]}.json', {'meta': {**m, 'videos': videos(c['guide'], lo, hi, c['id'], c['name'])}})
+        # defaultVideoId: Stremio plays the channel instead of listing its programmes
+        hints = {**m['behaviorHints'], 'defaultVideoId': c['id']}
+        write(f'meta/tv/{c["id"]}.json', {'meta': {**m, 'behaviorHints': hints, 'videos': videos(c['guide'], lo, hi, c['id'], c['name'])}})
         write(f'stream/tv/{c["id"]}.json', {'streams': [
             {'url': s[4], 'name': 'Free TV', 'title': f'Source {i}' + (f' · {s[5]}' if s[5] else ''),
              'behaviorHints': {'notWebReady': not s[4].startswith('https')}}
@@ -508,6 +511,17 @@ def test():
     (s, e, title, desc, genres), = found['SVT1.se'][1]
     assert (s - t0, e - t0, title, len(desc), genres) == (5 * H, 6 * H, 'Morgon', MAX_DESC, ['News'])
     assert [x[2] for x in found['PlutoTVAction.us'][1]] == ['Film']
+    # AMC+ is not AMC; only the first source's ids count; an empty id match yields to a name match;
+    # a broken feed loses only itself.
+    assert norm('AMC+') == 'amcplus' != norm('AMC HD')
+    two = {**pluto, 'sources': [(0, 0, 0, 0, 'http://cdn/x.m3u8'), *pluto['sources']]}
+    assert not any(k[0] == 'id' and len(k[1]) == 24 for k in channel_keys(two))
+    xml2 = b'''<tv><channel id="561d7d484dc7c8770484914a"/><channel id="SVT1.se"/>
+      <channel id="x.se"><display-name>SVT 1</display-name></channel>
+      <programme channel="x.se" start="20261122000000" stop="20261122010000"><title>Named</title></programme></tv>'''
+    found = read_guides([('bad', None, gzip.GzipFile(fileobj=io.BytesIO(gzip.compress(b"x")[:12] + b'x' * 50))),
+                         ('t', None, io.BytesIO(xml2))], [ch], t0, t0 + DAY)
+    assert [x[2] for x in found['SVT1.se'][1]] == ['Named']
 
     # Guide files sit where AIOStreams asks: genre then date, values percent-encoded, no skip.
     g, d = 'English Docs & Lifestyle', '2026-11-22'

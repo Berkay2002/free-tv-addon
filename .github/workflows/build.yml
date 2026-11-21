@@ -8,6 +8,7 @@ concurrency: {group: build, cancel-in-progress: true}
 jobs:
   build:  # fetches untrusted playlists: read-only token, no saved credentials
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # a feed that trickles bytes can't hold the job
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}

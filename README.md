@@ -11,7 +11,7 @@ merges duplicates and keeps up to three working sources per channel. A GitHub Ac
 
 ## Programme guide
 
-Every channel has programmes from yesterday through six days ahead (UTC days), so Jellyfin clients such as
+Every channel has programmes from today through six days ahead (UTC days), so Jellyfin clients such as
 Streamyfin, which play Live TV from the guide, always have something to tap. Real schedules come from free XMLTV
 feeds: [i.mjh.nz](https://i.mjh.nz) for Pluto TV (matched by the channel id in the stream URL), Samsung TV Plus,
 Plex and Roku, and [epgshare01](https://epgshare01.online/epgshare01/) for Sweden, Turkey, the UK, US, Canada,
