@@ -46,6 +46,10 @@ CTX = ssl.create_default_context()
 
 
 def fetch(url, timeout=15, limit=None, headers=None):
+    # Playlist URLs are untrusted: never let them reach file:// or ftp://.
+    # ponytail: no private-IP blocking; bodies are never published, only alive/dead.
+    if urllib.parse.urlsplit(url).scheme not in ('http', 'https'):
+        raise ValueError(f'unsupported scheme: {url}')
     req = urllib.request.Request(url, headers={'User-Agent': UA, **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout, context=CTX) as r:
         return r.status, r.geturl(), r.headers.get('Content-Type', ''), r.read(limit)
@@ -106,6 +110,8 @@ def collect():
     def add(key, name, logo, group, url, quality, geo):
         ch = found.setdefault(key, {'name': name, 'logo': logo, 'group': group, 'sources': []})
         ch['logo'] = ch['logo'] or logo
+        if not url.startswith(('http://', 'https://')):
+            return
         if url not in [s[0] for s in ch['sources']]:
             ch['sources'].append((url, quality, geo))
 
