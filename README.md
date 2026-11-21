@@ -9,6 +9,10 @@ merges duplicates and keeps up to three working sources per channel. A GitHub Ac
 - Addon: `https://raw.githubusercontent.com/Berkay2002/free-tv-addon/site/manifest.json`
 - Plain playlist: `https://raw.githubusercontent.com/Berkay2002/free-tv-addon/site/playlist.m3u`
 
+There is one catalog per language: `swedish`, `turkish` and `english`. AIOStreams lists live channels
+catalog by catalog in its catalog order, and its Jellyfin side gives some apps (Streamyfin on TVs) only the
+first 100 channels, so order the catalogs, or leave one out, per profile in AIOStreams' **Catalogs**.
+
 ## Programme guide
 
 Every channel has programmes from today through six days ahead (UTC days), so Jellyfin clients such as
@@ -17,7 +21,7 @@ feeds: [i.mjh.nz](https://i.mjh.nz) for Pluto TV (matched by the channel id in t
 Plex and Roku, and [epgshare01](https://epgshare01.online/epgshare01/) for Sweden, Turkey, the UK, US, Canada,
 Australia, Ireland and New Zealand (matched by channel name within the country). Times without a schedule are
 filled with three-hour "<channel> – Live" blocks. The catalog declares the `date` extra and the guide is written as
-`catalog/tv/channels/date=YYYY-MM-DD.json` and `catalog/tv/channels/genre=<group>&date=YYYY-MM-DD.json`, the paths
+`catalog/tv/<language>/date=YYYY-MM-DD.json` and `catalog/tv/<language>/genre=<group>&date=YYYY-MM-DD.json`, the paths
 AIOStreams asks for; each channel's meta carries the whole week too.
 
 Change the languages, groups, channel order or guide feeds at the top of `build.py`. `python build.py --test` runs the self-check.

@@ -357,9 +357,9 @@ def videos(sched, a, b, cid, name, kind=None):
     return out
 
 
-def guide_path(genre, date):
+def guide_path(cid, genre, date):
     """Where AIOStreams asks for a day: extras in its order (genre, date), the host decoding the URL."""
-    return f'catalog/tv/channels/{f"genre={genre}&" if genre else ""}date={date}.json'
+    return f'catalog/tv/{cid}/{f"genre={genre}&" if genre else ""}date={date}.json'
 
 
 def build(out=Path('site')):
@@ -380,12 +380,6 @@ def build(out=Path('site')):
             good.sort()
             channels.append({**ch, 'key': key, 'id': 'ftv_' + slug(key), 'sources': good[:MAX_SOURCES]})
 
-    def order(c):
-        names = [norm(n) for n in PRIORITY.get(c['group'], [])]
-        p = names.index(norm(c['name'])) if norm(c['name']) in names else len(names)
-        return GROUP_ORDER.index(c['group']), p, c['name'].lower()
-    channels.sort(key=order)
-
     lo = int(time.time()) // DAY * DAY + GUIDE_DAYS[0] * DAY
     hi = lo + len(GUIDE_DAYS) * DAY
     t0 = time.monotonic()
@@ -398,18 +392,28 @@ def build(out=Path('site')):
     for c in channels:
         c['guide'] = schedule(real.get(c['key'], (None, []))[1], lo, hi)
 
+    def order(c):  # in each group: the PRIORITY list, then channels with a real schedule, then by name
+        names = [norm(n) for n in PRIORITY.get(c['group'], [])]
+        p = names.index(norm(c['name'])) if norm(c['name']) in names else len(names)
+        return GROUP_ORDER.index(c['group']), p, c['key'] not in real, c['name'].lower()
+    channels.sort(key=order)
+
     if out.exists():
         shutil.rmtree(out)
     groups = [g for g in GROUP_ORDER if any(c['group'] == g for c in channels)]
+    # One catalog per language, so AIOStreams can order them or leave one out per profile
+    # (its Jellyfin side only gives some apps the first 100 channels).
+    catalogs = [(lang.lower(), [g for g in groups if g.startswith(lang)]) for lang in LANGS.values()]
+    catalogs = [(cid, gs) for cid, gs in catalogs if gs]
     write = lambda p, data: (out / p).parent.mkdir(parents=True, exist_ok=True) or \
         (out / p).write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')), 'utf8')
     write('manifest.json', {
-        'id': 'community.freetv.curated', 'version': '1.1.0', 'name': 'Free TV',
+        'id': 'community.freetv.curated', 'version': '1.2.0', 'name': 'Free TV',
         'description': 'Free-to-air Swedish, Turkish and English channels from iptv-org and '
                        'Free-TV, health-checked and deduplicated daily.',
         'resources': ['catalog', 'meta', 'stream'], 'types': ['tv'], 'idPrefixes': ['ftv_'],
-        'catalogs': [{'type': 'tv', 'id': 'channels', 'name': 'Free TV',
-                      'extra': [{'name': 'genre', 'options': groups}, {'name': 'date'}]}],
+        'catalogs': [{'type': 'tv', 'id': cid, 'name': f'Free TV {cid.title()}',
+                      'extra': [{'name': 'genre', 'options': gs}, {'name': 'date'}]} for cid, gs in catalogs],
         'behaviorHints': {'configurable': False, 'epgProvider': True}})
 
     def meta(c, n):
@@ -418,15 +422,17 @@ def build(out=Path('site')):
                 'channelNumber': n, 'behaviorHints': {'isLive': True}}
 
     metas = [meta(c, n) for n, c in enumerate(channels, 1)]
-    write('catalog/tv/channels.json', {'metas': metas})
-    for g in groups:
-        write(f'catalog/tv/channels/genre={g}.json', {'metas': [m for m in metas if m['genres'] == [g]]})
-    for day in range(lo, hi, DAY):  # the guide: one file per UTC day, and per group and day
-        date = time.strftime('%Y-%m-%d', time.gmtime(day))
-        dated = [{**m, 'videos': videos(c['guide'], day, day + DAY, c['id'], c['name'], c['kind'])} for m, c in zip(metas, channels)]
-        write(guide_path(None, date), {'metasDetailed': dated})
-        for g in groups:
-            write(guide_path(g, date), {'metasDetailed': [m for m in dated if m['genres'] == [g]]})
+    for cid, gs in catalogs:
+        mine = [(m, c) for m, c in zip(metas, channels) if m['genres'][0] in gs]
+        write(f'catalog/tv/{cid}.json', {'metas': [m for m, _ in mine]})
+        for g in gs:
+            write(f'catalog/tv/{cid}/genre={g}.json', {'metas': [m for m, _ in mine if m['genres'] == [g]]})
+        for day in range(lo, hi, DAY):  # the guide: one file per UTC day, and per group and day
+            date = time.strftime('%Y-%m-%d', time.gmtime(day))
+            dated = [{**m, 'videos': videos(c['guide'], day, day + DAY, c['id'], c['name'], c['kind'])} for m, c in mine]
+            write(guide_path(cid, None, date), {'metasDetailed': dated})
+            for g in gs:
+                write(guide_path(cid, g, date), {'metasDetailed': [m for m in dated if m['genres'] == [g]]})
     m3u = ['#EXTM3U']
     for m, c in zip(metas, channels):
         # defaultVideoId: Stremio plays the channel instead of listing its programmes
@@ -535,8 +541,8 @@ def test():
     # Guide files sit where AIOStreams asks: genre then date, values percent-encoded, no skip.
     g, d = 'English Docs & Lifestyle', '2026-11-22'
     asked = f'catalog/tv/channels/genre={urllib.parse.quote(g, safe="")}&date={d}.json'
-    assert urllib.parse.unquote(asked) == guide_path(g, d) == f'catalog/tv/channels/genre={g}&date={d}.json'
-    assert guide_path(None, d) == f'catalog/tv/channels/date={d}.json'
+    assert urllib.parse.unquote(asked) == guide_path('channels', g, d) == f'catalog/tv/channels/genre={g}&date={d}.json'
+    assert guide_path('swedish', None, d) == f'catalog/tv/swedish/date={d}.json'
     print('ok')
 
 
