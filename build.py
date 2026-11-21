@@ -110,6 +110,12 @@ def group_for(lang, categories):
     return 'English Entertainment'
 
 
+def kind_for(categories):
+    """A channel's category whatever its language ('Kids', 'News', ...): a programme without
+    genres gets it, so Jellyfin's Movies, Sports, Kids and News rows have every such channel."""
+    return group_for('eng', categories).removeprefix('English ')
+
+
 def collect():
     """Candidate channels: key -> {name, logo, group, sources: [(url, quality, geo)]}."""
     get = lambda f: json.loads(fetch(API + f, timeout=60)[3])
@@ -124,8 +130,8 @@ def collect():
 
     found = {}
 
-    def add(key, name, logo, group, url, quality, geo):
-        ch = found.setdefault(key, {'name': name, 'logo': logo, 'group': group, 'sources': []})
+    def add(key, name, logo, group, url, quality, geo, kind=None):
+        ch = found.setdefault(key, {'name': name, 'logo': logo, 'group': group, 'kind': kind, 'sources': []})
         ch['logo'] = ch['logo'] or logo
         if not url.startswith(('http://', 'https://')):
             return
@@ -150,7 +156,7 @@ def collect():
             continue
         c, lang = r
         add(c['id'], c['name'], logos.get(c['id']), group_for(lang, c['categories']),
-            s['url'], s['quality'] or '', 'Geo-blocked' in s['labels'])
+            s['url'], s['quality'] or '', 'Geo-blocked' in s['labels'], kind_for(c['categories']))
 
     for attrs, name, url in parse_m3u(fetch(FREETV, timeout=60)[3].decode('utf8')):
         lang = FREETV_GROUPS.get(attrs.get('group-title'))
@@ -163,7 +169,7 @@ def collect():
         key = cid if r else f'n:{norm(name)}'
         cats = r[0]['categories'] if r else []
         add(key, r[0]['name'] if r else clean_name(name), attrs.get('tvg-logo') or logos.get(cid),
-            group_for(lang, cats), url, '', 'Ⓖ' in name)
+            group_for(lang, cats), url, '', 'Ⓖ' in name, kind_for(cats))
 
     # Merge channels with the same name in the same group (iptv-org ids win over name keys).
     by_name = {}
@@ -340,12 +346,13 @@ def schedule(progs, lo, hi):
     return out
 
 
-def videos(sched, a, b, cid, name):
-    """The schedule's programmes overlapping [a, b) as Stremio videos."""
+def videos(sched, a, b, cid, name, kind=None):
+    """The schedule's programmes overlapping [a, b) as Stremio videos; no genres means the channel's kind."""
     out = []
     for s, e, title, desc, genres in sched:
         if e > a and s < b:
             v = {'id': f'{cid}:{s}', 'title': title or f'{name} – Live', 'startTime': iso(s), 'endTime': iso(e)}
+            genres = genres or ([kind] if kind else [])
             out.append({**v, **({'overview': desc} if desc else {}), **({'genres': genres} if genres else {})})
     return out
 
@@ -416,7 +423,7 @@ def build(out=Path('site')):
         write(f'catalog/tv/channels/genre={g}.json', {'metas': [m for m in metas if m['genres'] == [g]]})
     for day in range(lo, hi, DAY):  # the guide: one file per UTC day, and per group and day
         date = time.strftime('%Y-%m-%d', time.gmtime(day))
-        dated = [{**m, 'videos': videos(c['guide'], day, day + DAY, c['id'], c['name'])} for m, c in zip(metas, channels)]
+        dated = [{**m, 'videos': videos(c['guide'], day, day + DAY, c['id'], c['name'], c['kind'])} for m, c in zip(metas, channels)]
         write(guide_path(None, date), {'metasDetailed': dated})
         for g in groups:
             write(guide_path(g, date), {'metasDetailed': [m for m in dated if m['genres'] == [g]]})
@@ -424,7 +431,7 @@ def build(out=Path('site')):
     for m, c in zip(metas, channels):
         # defaultVideoId: Stremio plays the channel instead of listing its programmes
         hints = {**m['behaviorHints'], 'defaultVideoId': c['id']}
-        write(f'meta/tv/{c["id"]}.json', {'meta': {**m, 'behaviorHints': hints, 'videos': videos(c['guide'], lo, hi, c['id'], c['name'])}})
+        write(f'meta/tv/{c["id"]}.json', {'meta': {**m, 'behaviorHints': hints, 'videos': videos(c['guide'], lo, hi, c['id'], c['name'], c['kind'])}})
         write(f'stream/tv/{c["id"]}.json', {'streams': [
             {'url': s[4], 'name': 'Free TV', 'title': f'Source {i}' + (f' · {s[5]}' if s[5] else ''),
              'behaviorHints': {'notWebReady': not s[4].startswith('https')}}
@@ -454,6 +461,7 @@ def test():
     assert clean_name('BBC One Ⓖ') == 'BBC One'
     assert group_for('eng', ['general', 'news']) == 'English News'
     assert group_for('swe', ['news']) == 'Swedish'
+    assert kind_for(['news']) == 'News' and kind_for(['kids']) == 'Kids' and kind_for([]) == 'Entertainment'
 
     # XMLTV times: offsets are subtracted to UTC, 12-digit times and missing offsets are UTC.
     t0 = 1795305600  # 2026-11-22T00:00:00Z
@@ -478,6 +486,7 @@ def test():
     # Days hold every programme that overlaps them, so one crossing midnight is in both.
     sched = schedule([p(-H, H, 'Late')], t0 - DAY, t0 + DAY)
     assert [v['title'] for v in videos(sched, t0, t0 + DAY, 'ftv_X', 'X')][:2] == ['Late', 'X – Live']
+    assert videos(sched, t0, t0 + DAY, 'ftv_X', 'X', 'News')[1]['genres'] == ['News']
     assert videos(sched, t0 - DAY, t0, 'ftv_X', 'X')[-1] == \
         {'id': f'ftv_X:{t0 - H}', 'title': 'Late', 'startTime': '2026-11-21T23:00:00Z', 'endTime': '2026-11-22T01:00:00Z'}
 
