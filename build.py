@@ -347,11 +347,13 @@ def schedule(progs, lo, hi):
 
 
 def videos(sched, a, b, cid, name, kind=None):
-    """The schedule's programmes overlapping [a, b) as Stremio videos; no genres means the channel's kind."""
+    """The schedule's programmes overlapping [a, b) as Stremio videos; no genres means the channel's kind.
+
+    Every video has the channel's id, so an app that lists them as episodes (Stremio's TV app) plays the channel."""
     out = []
     for s, e, title, desc, genres in sched:
         if e > a and s < b:
-            v = {'id': f'{cid}:{s}', 'title': title or f'{name} – Live', 'startTime': iso(s), 'endTime': iso(e)}
+            v = {'id': cid, 'title': title or f'{name} – Live', 'released': iso(s), 'startTime': iso(s), 'endTime': iso(e)}
             genres = genres or ([kind] if kind else [])
             out.append({**v, **({'overview': desc} if desc else {}), **({'genres': genres} if genres else {})})
     return out
@@ -494,7 +496,8 @@ def test():
     assert [v['title'] for v in videos(sched, t0, t0 + DAY, 'ftv_X', 'X')][:2] == ['Late', 'X – Live']
     assert videos(sched, t0, t0 + DAY, 'ftv_X', 'X', 'News')[1]['genres'] == ['News']
     assert videos(sched, t0 - DAY, t0, 'ftv_X', 'X')[-1] == \
-        {'id': f'ftv_X:{t0 - H}', 'title': 'Late', 'startTime': '2026-11-21T23:00:00Z', 'endTime': '2026-11-22T01:00:00Z'}
+        {'id': 'ftv_X', 'title': 'Late', 'released': '2026-11-21T23:00:00Z',
+         'startTime': '2026-11-21T23:00:00Z', 'endTime': '2026-11-22T01:00:00Z'}
 
     # XMLTV: match by id (Pluto ids in stream URLs) or by name within the channel's country.
     ch = {'key': 'SVT1.se', 'name': 'SVT1', 'group': 'Swedish', 'sources': [(0, 0, 0, 0, 'http://x/a.m3u8')]}
